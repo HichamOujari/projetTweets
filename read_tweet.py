@@ -31,20 +31,6 @@ def foreach_batch_function(df, epoch_id):
         df2 = spark.createDataFrame([{"Sentiment": "1","tweetText":text}])
         df2.show()
 
-        tokenizedTest = tokenizer.transform(df2)
-        SwRemovedTest = swr.transform(tokenizedTest)
-        numericTest = hashTF.transform(SwRemovedTest).select('Label', 'MeaningfulWords', 'features')
-        numericTest.show(truncate=False, n=2)
-
-        prediction = model.transform(numericTest)
-        predictionFinal = prediction.select("MeaningfulWords", "prediction", "Label")
-        predictionFinal.show(n=4, truncate=False)
-        correctPrediction = predictionFinal.filter(
-            predictionFinal['prediction'] == predictionFinal['Label']).count()
-        totalData = predictionFinal.count()
-        print("correct prediction:", correctPrediction, ", total data:", totalData,
-              ", accuracy:", correctPrediction / totalData)
-
     except:
         print(ValueError)
 
