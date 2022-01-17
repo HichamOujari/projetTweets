@@ -1,62 +1,53 @@
-import findspark
-findspark.init()
-import pyspark
-
-# import necessary packages
-from pyspark import SparkContext
-from pyspark.streaming import StreamingContext
-from pyspark.sql import SQLContext
-from pyspark.sql.functions import desc
-
-sc = SparkContext()
-# we initiate the StreamingContext with 10 second batch interval. #next we initiate our sqlcontext
-ssc = StreamingContext(sc, 10)
-sqlContext = SQLContext(sc)
-
-# initiate streaming text from a TCP (socket) source:
-socket_stream = ssc.socketTextStream("127.0.0.1", 4444)
-# lines of tweets with socket_stream window of size 60, or 60 #seconds windows of time
-lines = socket_stream.window(60)
-
-# just a tuple to assign names
-from collections import namedtuple
-fields = ("hashtag", "count" )
-Tweet = namedtuple( 'Tweet', fields )
-# here we apply different operations on the tweets and save them to #a temporary sql table
-( lines.flatMap( lambda text: text.split( " " ) ) #Splits to a list
-  # Checks for    hashtag calls  
-  .filter( lambda word: word.lower().startswith("#") ) 
-  .map( lambda word: ( word.lower(), 1 ) ) # Lower cases the word
-  .reduceByKey( lambda a, b: a + b ) 
- # Stores in a Tweet Object
-  .map( lambda rec: Tweet( rec[0], rec[1] ) )
- # Sorts Them in a dataframe
-  .foreachRDD( lambda rdd: rdd.toDF().sort( desc("count") )
- # Registers only top 10 hashtags to a table.
-  .limit(10).registerTempTable("tweets") ) )
-
-# start streaming and wait couple of minutes to get enought tweets
-ssc.start()
-
-# import libraries to visualize the results
 import time
-from IPython import display
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas
-get_ipython().run_line_magic('matplotlib', 'inline')
-count = 0
-while count < 5:
-    
-    time.sleep(5)
-    top_10_tags = sqlContext.sql( 'Select hashtag, count from tweets' )
-    top_10_df = top_10_tags.toPandas()
-    display.clear_output(wait=True)
-    plt.figure( figsize = ( 10, 8 ) )
-    sns.barplot( x="count", y="hashtag", data=top_10_df)
-    plt.show()
-    count = count + 1
-    print(count)
+from pyspark import SparkContext
+from pyspark.sql import SparkSession
+from pyspark.sql.types import *
+from pyspark.sql.functions import *
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml.feature import HashingTF, Tokenizer, StopWordsRemover
+from pyspark.streaming import StreamingContext
 
-# stop streaming and wait couple of minutes to get enought tweets
-ssc.stop()
+#Socket info
+PORT = 8499
+IP = "localhost"
+
+
+#create Spark session
+appName = "app"
+spark = SparkSession \
+    .builder \
+    .appName(appName) \
+    .config("spark.some.config.option", "some-value") \
+    .getOrCreate()
+
+
+lines = spark.readStream.format("socket").option("host", IP).option("port", PORT).load()
+
+
+def foreach_batch_function(df, epoch_id):
+    try:
+        text=df.collect()[0].value
+        print(text)
+        df2 = spark.createDataFrame([{"Sentiment": "1","tweetText":text}])
+        df2.show()
+
+        tokenizedTest = tokenizer.transform(df2)
+        SwRemovedTest = swr.transform(tokenizedTest)
+        numericTest = hashTF.transform(SwRemovedTest).select('Label', 'MeaningfulWords', 'features')
+        numericTest.show(truncate=False, n=2)
+
+        prediction = model.transform(numericTest)
+        predictionFinal = prediction.select("MeaningfulWords", "prediction", "Label")
+        predictionFinal.show(n=4, truncate=False)
+        correctPrediction = predictionFinal.filter(
+            predictionFinal['prediction'] == predictionFinal['Label']).count()
+        totalData = predictionFinal.count()
+        print("correct prediction:", correctPrediction, ", total data:", totalData,
+              ", accuracy:", correctPrediction / totalData)
+
+    except:
+        print(ValueError)
+
+
+
+lines.writeStream.foreachBatch(foreach_batch_function).start().awaitTermination()
